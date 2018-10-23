@@ -101,7 +101,7 @@ class Request
         ////
         curl_setopt($ch, CURLOPT_HEADER, 1);
         $logger = $this->app->getConfig('logging')['logger'];
-        $logger->logRequest($this->method, $full_uri, $this->getHeaders(), $this->body);
+        $logger->logRequest($this->method, $this->getUrl()->getFullURL(), $query_string, $this->getHeaders(), $this->body);
         ////
 
         $response = curl_exec($ch);
@@ -111,7 +111,7 @@ class Request
         $header_size = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
         $headers = substr($response, 0, $header_size);
         $response = substr($response, $header_size);
-        $logger->logResponse($info['http_code'], explode("\r\n", $headers), $response);
+        $logger->logResponse($this->method, $this->getUrl()->getFullURL(), $info['http_code'], explode("\r\n", $headers), $response);
         ////
 
         if ($response === false) {
