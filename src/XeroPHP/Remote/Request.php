@@ -4,6 +4,7 @@ namespace XeroPHP\Remote;
 
 use XeroPHP\Application;
 use XeroPHP\Helpers;
+use XeroPHP\Remote\Exception\RateLimitExceededException;
 
 class Request
 {
@@ -22,6 +23,9 @@ class Request
     const HEADER_CONTENT_LENGTH    = 'Content-Length';
     const HEADER_AUTHORIZATION     = 'Authorization';
     const HEADER_IF_MODIFIED_SINCE = 'If-Modified-Since';
+
+    const RATE_LIMIT_RETRIES = 10;
+    const RATE_LIMIT_WAIT = 1;
 
     private $app;
     private $url;
@@ -98,28 +102,38 @@ class Request
             curl_setopt($ch, CURLOPT_POST, true);
         }
 
-        ////
         curl_setopt($ch, CURLOPT_HEADER, 1);
         $logger = $this->app->getConfig('logging')['logger'];
-        $logger->logRequest($this->method, $this->getUrl()->getFullURL(), $query_string, $this->getHeaders(), $this->body);
-        ////
 
-        $response = curl_exec($ch);
-        $info = curl_getinfo($ch);
+        for ($retries = 0; $retries < self::RATE_LIMIT_RETRIES; $retries++) {
+            $logger->logRequest($this->method, $this->getUrl()->getFullURL(), $query_string, $this->getHeaders(), $this->body);
 
-        ////
-        $header_size = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-        $headers = substr($response, 0, $header_size);
-        $response = substr($response, $header_size);
-        $logger->logResponse($this->method, $this->getUrl()->getFullURL(), $info['http_code'], explode("\r\n", $headers), $response);
-        ////
+            $response = curl_exec($ch);
+            $info = curl_getinfo($ch);
 
-        if ($response === false) {
-            throw new Exception('Curl error: ' . curl_error($ch));
+            $header_size = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+            $headers = substr($response, 0, $header_size);
+            $response = substr($response, $header_size);
+            $logger->logResponse($this->method, $this->getUrl()->getFullURL(), $info['http_code'], explode("\r\n", $headers), $response);
+
+            if ($response === false) {
+                throw new Exception('Curl error: ' . curl_error($ch));
+            }
+
+            $this->response = new Response($this, $response, $info);
+
+            try {
+                $this->response->parse();
+            } catch (RateLimitExceededException $e) {
+                sleep(self::RATE_LIMIT_WAIT);
+                continue;
+            }
+            break;
         }
 
-        $this->response = new Response($this, $response, $info);
-        $this->response->parse();
+        if ($retries === self::RATE_LIMIT_RETRIES && isset($e)) {
+            throw $e;
+        }
 
         return $this->response;
     }
